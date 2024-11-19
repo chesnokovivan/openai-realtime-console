@@ -66,7 +66,6 @@ type VoiceOption = 'alloy' | 'echo' | 'shimmer';
 
 export default function ConsolePage() {
   const [isConnected, setIsConnected] = useState(false);
-  const [isVADMode, setIsVADMode] = useState(false);
   const [micStatus, setMicStatus] = useState<'inactive' | 'listening' | 'processing'>('inactive');
   const [currentMessage, setCurrentMessage] = useState<string>('');
   const [items, setItems] = useState<ItemType[]>([]);
@@ -160,7 +159,6 @@ export default function ConsolePage() {
         await initializeAudio();
       }
 
-      // Initialize client with stored API key
       if (!clientRef.current) {
         clientRef.current = new RealtimeClient({
           apiKey: apiKey,
@@ -214,7 +212,7 @@ export default function ConsolePage() {
           }
         });
 
-        // Initialize session settings separately
+        // Initialize session settings
         await clientRef.current.updateSession({
           instructions: instructions
         });
@@ -222,14 +220,9 @@ export default function ConsolePage() {
         await clientRef.current.updateSession({
           input_audio_transcription: { model: 'whisper-1' }
         });
-        
-        await clientRef.current.updateSession({
-          turn_detection: null
-        });
 
-        // Set initial voice (corrected)
         await clientRef.current.updateSession({
-          voice: currentVoice  // Changed from audio_output.voice to just voice
+          voice: currentVoice
         });
       }
 
@@ -263,28 +256,19 @@ export default function ConsolePage() {
 
   const handleDisconnect = async () => {
     try {
-      // End recording first
       if (wavRecorderRef.current?.getStatus() !== 'ended') {
         await wavRecorderRef.current?.end();
       }
 
-      // Reset VAD mode
-      if (isVADMode) {
-        setIsVADMode(false);
-        setMicStatus('inactive');
-      }
-
-      // Disconnect client
       if (clientRef.current?.isConnected()) {
         await clientRef.current?.disconnect();
       }
 
       setIsConnected(false);
+      setMicStatus('inactive');
     } catch (error) {
       console.error('Failed to disconnect:', error);
-      // Force reset states even if there's an error
       setIsConnected(false);
-      setIsVADMode(false);
       setMicStatus('inactive');
     }
   };
@@ -299,11 +283,6 @@ export default function ConsolePage() {
 
   // Handle mic click
   const handleMicClick = async () => {
-    if (isVADMode) {
-      console.log('Push-to-talk disabled in VAD mode');
-      return;
-    }
-
     if (micStatus === 'inactive') {
       try {
         if (!clientRef.current?.isConnected()) {
@@ -365,91 +344,30 @@ export default function ConsolePage() {
 
   const handleMicStop = async () => {
     try {
-      // Only try to end recording if we're actually recording
-      if (wavRecorderRef.current?.getStatus() === 'recording') {
+      // Only try to end recording if we're actually recording and have a recorder instance
+      if (wavRecorderRef.current && wavRecorderRef.current.getStatus() === 'recording') {
         await wavRecorderRef.current?.end();
-        clientRef.current?.createResponse();
+        
+        // Only try to create response if client is connected
+        if (clientRef.current?.isConnected()) {
+          clientRef.current?.createResponse();
+        }
       }
       setMicStatus('inactive');
     } catch (error) {
       console.error('Failed to stop recording:', error);
+      // Ensure we reset the mic status even if there's an error
       setMicStatus('inactive');
-    }
-  };
-
-  const changeTurnEndType = async (isVADMode: boolean) => {
-    if (!clientRef.current || !wavRecorderRef.current) return;
-
-    const client = clientRef.current;
-    const wavRecorder = wavRecorderRef.current;
-
-    try {
-      // First, check if we need to end the current recording
-      if (wavRecorder.getStatus() === 'recording') {
-        await wavRecorder.end();
-      }
-
-      // Update VAD mode state
-      setIsVADMode(isVADMode);
       
-      if (isVADMode) {
-        // Reset states when entering VAD mode
-        setCurrentResponse('');
-        setCurrentMessage('');
-        setIsAISpeaking(false);
-        setIsResponseTurn(false);
-
-        // Enable VAD mode in client first
-        await client.updateSession({
-          turn_detection: { type: 'server_vad' }
-        });
-        
-        // Only start recording if client is connected
-        if (client.isConnected()) {
-          try {
-            await wavRecorder.begin(selectedDeviceId);
-            setMicStatus('listening');
-            
-            await wavRecorder.record((data) => {
-              if (client.isConnected()) {
-                client.appendInputAudio(data.mono);
-              }
-            });
-          } catch (error) {
-            console.error('Failed to start recording:', error);
-            setMicStatus('inactive');
-            setIsVADMode(false);
-          }
+      // Attempt cleanup if possible
+      if (wavRecorderRef.current) {
+        try {
+          await wavRecorderRef.current.quit();
+        } catch (cleanupError) {
+          console.error('Failed to cleanup recorder:', cleanupError);
         }
-      } else {
-        // Clean up states when disabling VAD
-        setIsAISpeaking(false);
-        setIsResponseTurn(false);
-        
-        // Disable VAD mode
-        await client.updateSession({
-          turn_detection: null
-        });
-        setMicStatus('inactive');
-        // Only try to end if we're recording
-        if (wavRecorder.getStatus() === 'recording') {
-          await wavRecorder.end();
-        }
-      }
-    } catch (error) {
-      console.error('Error changing turn end type:', error);
-      setIsVADMode(false);
-      setMicStatus('inactive');
-      // Only try to end if we're recording
-      if (wavRecorder.getStatus() === 'recording') {
-        await wavRecorder.end();
       }
     }
-  };
-
-  // Update the VAD toggle handler
-  const handleVADToggle = async () => {
-    await changeTurnEndType(!isVADMode);
   };
 
   const getAudioDevices = async () => {
@@ -497,25 +415,13 @@ export default function ConsolePage() {
 
   const handleDeviceSelect = async (deviceId: string) => {
     try {
-      // Store the new device ID
       setSelectedDeviceId(deviceId);
       
-      // If we're not connected, just update the ID
       if (!isConnected) return;
       
-      // If we're in VAD mode, we need to restart the recording
-      if (isVADMode) {
-        await changeTurnEndType(false); // Disable VAD first
+      if (micStatus === 'listening') {
         await wavRecorderRef.current?.end();
-        await wavRecorderRef.current?.begin(deviceId);
-        await changeTurnEndType(true); // Re-enable VAD with new device
-      } else {
-        // For push-to-talk, just end current recording if active
-        if (micStatus === 'listening') {
-          await wavRecorderRef.current?.end();
-          setMicStatus('inactive');
-        }
-        // Next push-to-talk will use the new device automatically
+        setMicStatus('inactive');
       }
     } catch (error) {
       console.error('Failed to switch device:', error);
@@ -549,7 +455,7 @@ export default function ConsolePage() {
 
     try {
       await clientRef.current.updateSession({
-        voice  // Changed from audio_output.voice to just voice
+        voice
       });
       setCurrentVoice(voice);
     } catch (error) {
@@ -585,12 +491,9 @@ export default function ConsolePage() {
           isListening={micStatus === 'listening'}
           isSpeaking={isAudioPlaying}
           isConnected={isConnected}
+          isProcessing={micStatus === 'processing'}
           message={currentMessage}
           currentResponse={currentResponse}
-          onMicClick={handleMicClick}
-          isVADMode={isVADMode}
-          onVADToggle={handleVADToggle}
-          disableMic={isVADMode}
           onMicStart={handleMicStart}
           onMicStop={handleMicStop}
           audioAnalyzer={analyzerRef.current}

@@ -7,21 +7,18 @@ interface CharacterProps {
   isSpeaking: boolean;
   isConnected: boolean;
   message: string;
-  onMicClick: () => Promise<void>;
-  isVADMode: boolean;
-  onVADToggle: () => Promise<void>;
-  disableMic: boolean;
   currentResponse: string;
   onMicStart: () => Promise<void>;
   onMicStop: () => Promise<void>;
   audioAnalyzer?: AnalyserNode;
+  isProcessing: boolean;
 }
 
-// Add this helper function at the component level
+// Simplify the helper function to only show three states
 const getMicButtonText = (isConnected: boolean, isListening: boolean) => {
   if (!isConnected) return "Connect to start!";
-  if (isListening) return "Release to Send!";
-  return "Press & Hold to Speak!";
+  if (isListening) return "Click to send message";
+  return "Click to start recording";
 };
 
 export const Character: React.FC<CharacterProps> = ({
@@ -29,14 +26,11 @@ export const Character: React.FC<CharacterProps> = ({
   isSpeaking,
   isConnected,
   message,
-  onMicClick,
-  isVADMode,
-  onVADToggle,
-  disableMic,
   currentResponse,
   onMicStart,
   onMicStop,
   audioAnalyzer,
+  isProcessing,
 }) => {
   const [isActuallySpeaking, setIsActuallySpeaking] = useState(false);
   const animationFrameRef = useRef<number>();
@@ -155,31 +149,31 @@ export const Character: React.FC<CharacterProps> = ({
     });
   }, [currentResponse, message, isListening, isSpeaking, isConnected]);
 
-  // Add these handlers for the mic button
+  // Fix the mic button handlers
   const handleMouseDown = async (e: React.MouseEvent) => {
     e.preventDefault(); // Prevent text selection
-    if (!disableMic && isConnected) {
+    if (isConnected) {  // Changed from !isConnected
       await onMicStart();
     }
   };
 
   const handleMouseUp = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!disableMic && isConnected) {
+    if (isConnected) {  // Changed from !isConnected
       await onMicStop();
     }
   };
 
   const handleTouchStart = async (e: React.TouchEvent) => {
     e.preventDefault();
-    if (!disableMic && isConnected) {
+    if (isConnected) {  // Changed from !isConnected
       await onMicStart();
     }
   };
 
   const handleTouchEnd = async (e: React.TouchEvent) => {
     e.preventDefault();
-    if (!disableMic && isConnected) {
+    if (isConnected) {  // Changed from !isConnected
       await onMicStop();
     }
   };
@@ -274,19 +268,8 @@ export const Character: React.FC<CharacterProps> = ({
         />
       </div>
 
-      {/* Controls */}
+      {/* Simplified Controls - only mic button */}
       <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4">
-        {/* VAD Toggle */}
-        <button 
-          onClick={onVADToggle}
-          className={`
-            px-4 py-2 rounded-full text-sm
-            ${isVADMode ? 'bg-purple-500 text-white' : 'bg-gray-200'}
-          `}
-        >
-          {isVADMode ? 'VAD Mode' : 'Push to Talk'}
-        </button>
-
         {/* Mic Button Container with Tooltip */}
         <div className="relative group">
           {/* Tooltip */}
@@ -316,14 +299,14 @@ export const Character: React.FC<CharacterProps> = ({
               scale-110
             `} />
 
-            {/* Main Mic Button - Updated with press-and-hold handlers */}
+            {/* Main Mic Button - Now only uses press-and-hold handlers */}
             <button 
               onMouseDown={handleMouseDown}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
-              disabled={disableMic || !isConnected}
+              disabled={!isConnected}
               className={`
                 relative
                 w-16 h-16 rounded-full
