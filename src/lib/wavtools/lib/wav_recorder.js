@@ -503,7 +503,7 @@ export class WavRecorder {
    */
   async end() {
     if (!this.processor) {
-      throw new Error('Session ended: please call .begin() first');
+      return; // Early return if already ended
     }
 
     const _processor = this.processor;
@@ -511,20 +511,27 @@ export class WavRecorder {
     this.log('Stopping ...');
     await this._event('stop');
     this.recording = false;
-    const tracks = this.stream.getTracks();
-    tracks.forEach((track) => track.stop());
+
+    if (this.stream) {
+      const tracks = this.stream.getTracks();
+      tracks.forEach((track) => track.stop());
+    }
 
     this.log('Exporting ...');
     const exportData = await this._event('export', {}, _processor);
 
-    this.processor.disconnect();
-    this.source.disconnect();
-    this.node.disconnect();
-    this.analyser.disconnect();
+    // Safely disconnect nodes if they exist
+    if (this.processor) this.processor.disconnect();
+    if (this.source) this.source.disconnect();
+    if (this.node) this.node.disconnect();
+    if (this.analyser) this.analyser.disconnect();
+
+    // Clear references
     this.stream = null;
     this.processor = null;
     this.source = null;
     this.node = null;
+    this.analyser = null;
 
     const packer = new WavPacker();
     const result = packer.pack(this.sampleRate, exportData.audio);
